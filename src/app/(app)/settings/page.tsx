@@ -45,15 +45,26 @@ export default function SettingsPage() {
     return { ...defaults };
   }, [goals, defaults]);
 
-  const [overrides, setOverrides] = useState<Record<string, number>>({});
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const values = { ...initialValues, ...overrides };
+  const getDisplayValue = (key: GoalKey): string => {
+    if (key in overrides) return overrides[key];
+    return String(initialValues[key] ?? "");
+  };
+
+  const getNumericValues = () => {
+    const result = { ...initialValues };
+    for (const [key, val] of Object.entries(overrides)) {
+      result[key as GoalKey] = val === "" ? 0 : Number(val);
+    }
+    return result;
+  };
 
   async function handleSave() {
     setSaving(true);
-    await saveGoals(values);
+    await saveGoals(getNumericValues());
     setSaving(false);
     setSaved(true);
     setOverrides({});
@@ -89,9 +100,10 @@ export default function SettingsPage() {
                   <label className="text-sm text-gray-400 w-20">{field.label}</label>
                   <input
                     type="number"
-                    value={values[field.key] ?? ""}
+                    inputMode="numeric"
+                    value={getDisplayValue(field.key)}
                     onChange={(e) =>
-                      setOverrides((v) => ({ ...v, [field.key]: Number(e.target.value) }))
+                      setOverrides((v) => ({ ...v, [field.key]: e.target.value }))
                     }
                     className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
                   />
