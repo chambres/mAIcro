@@ -4,7 +4,7 @@ import { useState } from "react";
 import MealInput from "@/components/MealInput";
 import { useDailyLog } from "@/hooks/useDailyLog";
 import { formatDate, getMealLabel } from "@/lib/utils";
-import { ParsedFoodItem, Food } from "@/lib/types";
+import { ParsedFoodItem } from "@/lib/types";
 
 export default function LogPage() {
   const [step, setStep] = useState<"input" | "loading" | "confirm">("input");
@@ -30,27 +30,7 @@ export default function LogPage() {
       if (!res.ok) throw new Error("Failed to parse");
       const { items: parsed } = await res.json();
 
-      // For items without a match, look up nutrition via Gemini
-      const withNutrition = await Promise.all(
-        parsed.map(async (item: ParsedFoodItem) => {
-          if (item.matched_food) return item;
-
-          try {
-            const lookupRes = await fetch("/api/gemini/lookup-food", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ name: `${item.quantity} ${item.unit} ${item.name}` }),
-            });
-            if (lookupRes.ok) {
-              const { nutrition } = await lookupRes.json();
-              return { ...item, estimated_nutrition: nutrition };
-            }
-          } catch { /* ignore lookup failure */ }
-          return item;
-        })
-      );
-
-      setItems(withNutrition);
+      setItems(parsed);
       setStep("confirm");
     } catch {
       setError("Failed to parse your meal. Try rephrasing.");
@@ -63,8 +43,7 @@ export default function LogPage() {
     const today = formatDate(new Date());
 
     for (const item of items) {
-      const food: Food | undefined = item.matched_food;
-      const est = item.estimated_nutrition;
+      const food = item.matched_food;
       const servings = item.servings || 1;
 
       await addLog({
@@ -73,13 +52,13 @@ export default function LogPage() {
         food_id: food?.id ?? null,
         food_name: food?.name ?? item.name,
         servings,
-        calories: Math.round((food?.calories ?? est?.calories ?? 0) * servings),
-        protein_g: Math.round((food?.protein_g ?? est?.protein_g ?? 0) * servings),
-        carbs_g: Math.round((food?.carbs_g ?? est?.carbs_g ?? 0) * servings),
-        fat_g: Math.round((food?.fat_g ?? est?.fat_g ?? 0) * servings),
-        fiber_g: Math.round((food?.fiber_g ?? est?.fiber_g ?? 0) * servings),
-        sugar_g: Math.round((food?.sugar_g ?? est?.sugar_g ?? 0) * servings),
-        sodium_mg: Math.round((food?.sodium_mg ?? est?.sodium_mg ?? 0) * servings),
+        calories: Math.round((food?.calories ?? 0) * servings),
+        protein_g: Math.round((food?.protein_g ?? 0) * servings),
+        carbs_g: Math.round((food?.carbs_g ?? 0) * servings),
+        fat_g: Math.round((food?.fat_g ?? 0) * servings),
+        fiber_g: Math.round((food?.fiber_g ?? 0) * servings),
+        sugar_g: Math.round((food?.sugar_g ?? 0) * servings),
+        sodium_mg: Math.round((food?.sodium_mg ?? 0) * servings),
       });
     }
 
@@ -142,9 +121,8 @@ export default function LogPage() {
 
           {items.map((item, i) => {
             const food = item.matched_food;
-            const est = item.estimated_nutrition;
             const cals = Math.round(
-              (food?.calories ?? est?.calories ?? 0) * (item.servings || 1)
+              (food?.calories ?? 0) * (item.servings || 1)
             );
 
             return (
@@ -155,12 +133,12 @@ export default function LogPage() {
                       {food?.name ?? item.name}
                     </p>
                     {food ? (
-                      <span className="text-[10px] text-green-400 bg-green-900/30 px-1.5 py-0.5 rounded">
-                        Matched
-                      </span>
-                    ) : est ? (
-                      <span className="text-[10px] text-amber-400 bg-amber-900/30 px-1.5 py-0.5 rounded">
-                        Estimated
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                        food.source === "lookup"
+                          ? "text-amber-400 bg-amber-900/30"
+                          : "text-green-400 bg-green-900/30"
+                      }`}>
+                        {food.source === "lookup" ? "Estimated" : "Matched"}
                       </span>
                     ) : (
                       <span className="text-[10px] text-gray-500">No nutrition data</span>

@@ -2,6 +2,14 @@ import { createClient } from "@/lib/supabase/server";
 import { geminiModel, PARSE_MEAL_PROMPT, parseJsonResponse } from "@/lib/gemini";
 import { NextResponse } from "next/server";
 
+// Extract the numeric grams/ml/etc from a serving size string like "60g" or "1 cup (240ml)"
+function extractServingAmount(servingSize: string | null): { amount: number; unit: string } | null {
+  if (!servingSize) return null;
+  const match = servingSize.match(/(\d+\.?\d*)\s*(g|ml|oz)\b/i);
+  if (match) return { amount: parseFloat(match[1]), unit: match[2].toLowerCase() };
+  return null;
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -15,7 +23,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No text provided" }, { status: 400 });
     }
 
-    // Parse the meal text with Gemini
+    // Step 1: Parse the meal text with Gemini
     const result = await geminiModel.generateContent(PARSE_MEAL_PROMPT + text);
     const parsed = parseJsonResponse(result.response.text()) as Array<{
       name: string;
@@ -24,8 +32,8 @@ export async function POST(request: Request) {
       servings: number;
     }>;
 
-    // Try fuzzy matching against user's food DB
-    const matched = await Promise.all(
+    // Step 2: Fuzzy match against user's food DB
+    const items = await Promise.all(
       parsed.map(async (item) => {
         const { data: matches } = await supabase
           .from("foods")
@@ -34,35 +42,82 @@ export async function POST(request: Request) {
           .eq("user_id", user.id)
           .limit(1);
 
-        return {
-          ...item,
-          matched_food: matches?.[0] || null,
-        };
-      })
-    );
+        const matched = matches?.[0] || null;
 
-    // For matched foods, ask Gemini to calculate correct servings
-    const withServings = await Promise.all(
-      matched.map(async (item) => {
-        if (!item.matched_food) return item;
+        if (matched) {
+          // Step 3a: Matched - calculate servings from quantity vs serving size
+          let servings = item.servings || 1;
+          const serving = extractServingAmount(matched.serving_size);
+          const userUnit = item.unit?.toLowerCase();
 
-        const food = item.matched_food;
+          if (serving && item.quantity && userUnit === serving.unit) {
+            servings = Math.round((item.quantity / serving.amount) * 100) / 100;
+          }
+
+          return { ...item, servings, matched_food: matched };
+        }
+
+        // Step 3b: No match - ask Gemini to estimate nutrition and auto-create food
         try {
-          const servingsResult = await geminiModel.generateContent(
-            `The user said they ate "${item.quantity} ${item.unit} ${item.name}". ` +
-            `The food "${food.name}" in their database has a serving size of "${food.serving_size}". ` +
-            `How many servings is ${item.quantity} ${item.unit}? ` +
-            `Return ONLY a JSON object: {"servings": number} (a decimal number, e.g. 16.67)`
+          const lookupResult = await geminiModel.generateContent(
+            `Estimate the nutrition facts for: ${item.quantity} ${item.unit} of ${item.name}.
+Return ONLY valid JSON:
+{
+  "name": "${item.name}",
+  "serving_size": "${item.quantity}${item.unit}",
+  "calories": number,
+  "protein_g": number,
+  "carbs_g": number,
+  "fat_g": number,
+  "fiber_g": number,
+  "sugar_g": number,
+  "sodium_mg": number
+}`
           );
-          const { servings } = parseJsonResponse(servingsResult.response.text()) as { servings: number };
-          return { ...item, servings };
+          const estimated = parseJsonResponse(lookupResult.response.text()) as {
+            name: string;
+            serving_size: string;
+            calories: number;
+            protein_g: number;
+            carbs_g: number;
+            fat_g: number;
+            fiber_g: number;
+            sugar_g: number;
+            sodium_mg: number;
+          };
+
+          // Auto-create food record in DB
+          const { data: newFood } = await supabase
+            .from("foods")
+            .insert({
+              user_id: user.id,
+              name: estimated.name || item.name,
+              serving_size: estimated.serving_size || `${item.quantity}${item.unit}`,
+              calories: estimated.calories || 0,
+              protein_g: estimated.protein_g || 0,
+              carbs_g: estimated.carbs_g || 0,
+              fat_g: estimated.fat_g || 0,
+              fiber_g: estimated.fiber_g || 0,
+              sugar_g: estimated.sugar_g || 0,
+              sodium_mg: estimated.sodium_mg || 0,
+              source: "lookup",
+            })
+            .select()
+            .single();
+
+          return {
+            ...item,
+            servings: 1,
+            matched_food: newFood,
+          };
         } catch {
-          return item;
+          // If lookup fails, return item without nutrition
+          return { ...item, matched_food: null };
         }
       })
     );
 
-    return NextResponse.json({ items: withServings });
+    return NextResponse.json({ items });
   } catch (error) {
     console.error("Parse meal error:", error);
     return NextResponse.json(
