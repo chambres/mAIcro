@@ -1,0 +1,18 @@
+<svg width="192" height="192" viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="192" height="192" fill="#16a34a"/>
+
+  <!-- Leaf icon -->
+  <g transform="translate(96, 96)">
+    <!-- Outer leaf shape -->
+    <path d="M 0 -45 Q 25 -35 30 -5 Q 35 25 15 40 Q -5 50 -20 35 Q -30 20 -25 0 Q -20 -25 0 -45"
+          fill="#22c55e" stroke="#ffffff" stroke-width="2"/>
+
+    <!-- Inner leaf vein -->
+    <path d="M 0 -40 Q 5 -20 0 20"
+          stroke="#ffffff" stroke-width="2" fill="none"/>
+
+    <!-- Leaf tip accent -->
+    <circle cx="0" cy="-45" r="3" fill="#ffffff"/>
+  </g>
+</svg>
